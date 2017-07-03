@@ -1,5 +1,8 @@
 #include "chip8.h"
 
+#define true 1
+#define false 0
+
 /* 
 * Type: CALL 
 * Explanation: Calls RCA 1802 program at address NNN. Not necessary for most ROMs.
@@ -12,7 +15,14 @@ void _0NNN(struct Chip8 * chip, const unsigned short _opcode){
 * Type: DISPLAY 
 * Explanation: Clears the screen.
 */
-void _00E0(struct Chip8 * chip, const unsigned short _opcode){
+void _00E0(struct Chip8 chip, const unsigned short _opcode){
+	int i = 0;
+	for(i; i < 2048; i++){
+		chip.gfx[i] = 0x0;
+	}
+	
+	chip.draw_flag = true;
+	chip.pc += 2;
     //printf("\nExecutado _00E0");
 }
 
@@ -20,8 +30,11 @@ void _00E0(struct Chip8 * chip, const unsigned short _opcode){
 * Type: FLOW 
 * Explanation: Returns from a subroutine.
 */
-void _00EE(struct Chip8 * chip, const unsigned short _opcode){
-//printf("\nExecutado _00EE");
+void _00EE(struct Chip8 chip, const unsigned short _opcode){
+	chip.sp--;
+	chip.pc = chip.stack[chip.sp];
+	chip.pc += 2;
+	//printf("\nExecutado _00EE");
 }
 
 /* 
@@ -327,13 +340,28 @@ void DXYN(struct Chip8 chip, const unsigned short _opcode){
     // reset the collision detect
     chip.V[0xF] = 0;
     
-    int yLine = 0;
-    for(0; yLine < height; yLine++){
-    	pixels = chip.memory[chip.I + yLine];
+    int line = 0;
+    for(line; line < height; line++){
+    	pixels = chip.memory[chip.I + line];
     	
-    	
+    	// Check if the current evaluated pixel is set to 1 (note that 0x80 >> xline scan through the byte, one bit at the time)
+    	int analyzedBit = 0;
+    	for(analyzedBit; analyzedBit < 8; analyzedBit++){
+    		
+    		// bit is set
+    		if((pixels & (0x80 >> analyzedBit)) != 0){
+    			unsigned short idx = xIndex + analyzedBit + ((yIndex + line) * 64);
+    			
+    			// collision detect
+				if(chip.gfx[idx] == 1){
+					chip.V[0xF] = 1;
+				}
+				
+				chip.gfx[idx] ^= 1;
+			}
+		}
 	}
-	//printf("\nExecutado DXYN");
+	//printf("\nExecutado DXYN");ç
 	
 	chip.draw_flag = 1;
 	chip.pc += 2;
@@ -341,17 +369,33 @@ void DXYN(struct Chip8 chip, const unsigned short _opcode){
 
 /* 
 * Type: KeyOp 
-* Explanation: Skips the next instruction if the key stored in VX is pressed. (Usually the next instruction is a jump to skip a code block)
+* Explanation: Skips the next instruction if the key stored in VX is pressed. 
+* (Usually the next instruction is a jump to skip a code block)
 */
 void EX9E(struct Chip8 chip, const unsigned short _opcode){
+	unsigned short xIndex = (_opcode & 0x0F00) >> 8;
+	
+	if(chip.V[xIndex] != 0){
+		chip.pc += 4;
+	} else {
+		chip.pc += 2;
+	}
     //printf("\nExecutado EX9E");
 }
 
 /* 
 * Type: KeyOp 
-* Explanation: Skips the next instruction if the key stored in VX isn't pressed. (Usually the next instruction is a jump to skip a code block)
+* Explanation: Skips the next instruction if the key stored in VX isn't pressed. 
+* (Usually the next instruction is a jump to skip a code block)
 */
 void EXA1(struct Chip8 chip, const unsigned short _opcode){
+	unsigned short xIndex = (_opcode & 0x0F00) >> 8;
+	
+	if(chip.V[xIndex] == 0){
+		chip.pc += 4;
+	} else {
+		chip.pc += 2;
+	}
     //printf("\nExecutado EXA1");
 }
 
@@ -360,14 +404,35 @@ void EXA1(struct Chip8 chip, const unsigned short _opcode){
 * Explanation: Sets VX to the value of the delay timer.
 */
 void FX07(struct Chip8 chip, const unsigned short _opcode){
+	unsigned short xIndex = (_opcode & 0x0F00) >> 8;
+	
+	chip.V[xIndex] = chip.delay_timer;
+	chip.pc += 2;
     //printf("\nExecutado FX07");
 }
 
 /* 
 * Type: KeyOp 
-* Explanation: A key press is awaited, and then stored in VX. (Blocking Operation. All instruction halted until next key event)
+* Explanation: A key press is awaited, and then stored in VX. 
+* (Blocking Operation. All instruction halted until next key event)
 */
 void FX0A(struct Chip8 chip, const unsigned short _opcode){
+	unsigned short xIndex = (_opcode & 0x0F00) >> 8;
+	int keyPress = false;
+	
+	int i = 0;
+	for(i; i < 16; i++){
+		if(chip.key[i] != 0){
+			chip.V[xIndex] = i;
+			keyPress = true;
+		}
+	}
+	
+	if(keyPress != 1){
+		return;
+	}
+	
+	chip.pc += 2;
     //printf("\nExecutado FX0A");
 }
 
@@ -376,6 +441,9 @@ void FX0A(struct Chip8 chip, const unsigned short _opcode){
 * Explanation: Sets the delay timer to VX.
 */
 void FX15(struct Chip8 chip, const unsigned short _opcode){
+	unsigned short xIndex = (_opcode & 0x0F00) >> 8;
+	chip.delay_timer = chip.V[xIndex];
+	chip.pc += 2;
     //printf("\nExecutado FX15");
 }
 
@@ -384,6 +452,10 @@ void FX15(struct Chip8 chip, const unsigned short _opcode){
 * Explanation: Sets the sound timer to VX.
 */
 void FX18(struct Chip8 chip, const unsigned short _opcode){
+	unsigned short xIndex = (_opcode & 0x0F00) >> 8;
+	chip.sound_timer = chip.V[xIndex];
+	chip.pc += 2;
+	
     //printf("\nExecutado FX18");
 }
 
@@ -392,6 +464,16 @@ void FX18(struct Chip8 chip, const unsigned short _opcode){
 * Explanation: Adds VX to I
 */
 void FX1E(struct Chip8 chip, const unsigned short _opcode){
+	unsigned short xIndex = (_opcode & 0x0F00) >> 8;
+	
+	if(chip.I + chip.V[xIndex] > 0xFFF){
+		chip.V[0xF] = 1;
+	} else {
+		chip.V[0xF] = 0;
+	}
+	
+	chip.I += chip.V[xIndex];
+	chip.pc += 2;
     //printf("\nExecutado FX1E");
 }
 
@@ -400,6 +482,10 @@ void FX1E(struct Chip8 chip, const unsigned short _opcode){
 * Explanation: Sets I to the location of the sprite for the character in VX. Characters 0-F (in hexadecimal) are represented by a 4x5 font.
 */
 void FX29(struct Chip8 chip, const unsigned short _opcode){
+	unsigned short xIndex = (_opcode & 0x0F00) >> 8;
+	
+	chip.I = chip.V[xIndex] * 0x5;
+	chip.pc += 2;
     //printf("\nExecutado FX29");
 }
 
@@ -408,6 +494,13 @@ void FX29(struct Chip8 chip, const unsigned short _opcode){
 * Explanation: Stores the binary-coded decimal representation of VX, with the most significant of three digits at the address in I, the middle digit at I plus 1, and the least significant digit at I plus 2. (In other words, take the decimal representation of VX, place the hundreds digit in memory at location in I, the tens digit at location I+1, and the ones digit at location I+2.)
 */
 void FX33(struct Chip8 chip, const unsigned short _opcode){
+	unsigned short xIndex = (_opcode & 0x0F00) >> 8;
+	
+	chip.memory[chip.I] = chip.V[xIndex] / 100;
+	chip.memory[chip.I] = (chip.V[xIndex] / 10) % 10;
+	chip.memory[chip.I] = (chip.V[xIndex] % 100) % 10;
+	chip.pc += 2;
+	
     //printf("\nExecutado FX33");
 }
 
@@ -416,6 +509,16 @@ void FX33(struct Chip8 chip, const unsigned short _opcode){
 * Explanation: Stores V0 to VX (including VX) in memory starting at address I.
 */
 void FX55(struct Chip8 chip, const unsigned short _opcode){
+	unsigned short xIndex = (_opcode & 0x0F00) >> 8;
+	
+	int i = 0;
+	for(i; i <= xIndex; ++i){
+		chip.memory[chip.I + i] = chip.V[i];
+	}
+	
+	// On the original interpreter, when the operation is done, I = I + X + 1.
+	chip.I += xIndex + 1;
+	chip.pc += 2;
     //printf("\nExecutado FX55");
 }
 
@@ -424,5 +527,15 @@ void FX55(struct Chip8 chip, const unsigned short _opcode){
 * Explanation: Fills V0 to VX (including VX) with values from memory starting at address I.
 */
 void FX65(struct Chip8 chip, const unsigned short _opcode){
+	unsigned short xIndex = (_opcode & 0x0F00) >> 8;
+	
+	int i = 0;
+	for(i; i <= xIndex; ++i){
+		chip.V[i] = chip.memory[chip.I + i];
+	}
+	
+	// On the original interpreter, when the operation is done, I = I + X + 1.
+	chip.I += xIndex + 1;
+	chip.pc += 2;
     //printf("\nExecutado FX65");
 }
